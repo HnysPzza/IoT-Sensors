@@ -24,6 +24,7 @@ static uint32_t  lastDebounceTime    = 0;
 
 static bool      hasRotatedSinceSend = false;
 static uint32_t  lastPulseSentTime   = 0;
+static uint32_t  lastPulseAttempt    = 0;
 static uint32_t  lastHeartbeatSent   = 0;
 static uint32_t  lastStatusPrint     = 0;
 static bool      activitySinceHb     = false;
@@ -202,6 +203,14 @@ void setup() {
     }
     Serial.printf("\nNTP Synced: %s\n", isoNow().c_str());
 
+    uint32_t epochNow = (uint32_t)time(nullptr);
+    if (epochNow > bootCounter) {
+        bootCounter = epochNow;
+        prefs.begin("iot-node", false);
+        prefs.putUInt("boot_cnt", bootCounter);
+        prefs.end();
+    }
+
     currentState      = digitalRead(SENSOR_INPUT_PIN);
     lastRawReading    = currentState;
     lastHeartbeatSent = millis();
@@ -235,11 +244,13 @@ void loop() {
         digitalWrite(ONBOARD_LED_PIN, HIGH);
     }
 
-    // 2. Transmit throttled rotation pulse while running
-    if (hasRotatedSinceSend && (now - lastPulseSentTime >= MIN_PULSE_INTERVAL_MS)) {
-        lastPulseSentTime = now;
-        hasRotatedSinceSend = false;
-        sendSensorEvent("pulse", "active");
+    // 2. Transmit throttled rotation pulse while running (immediate on first edge after idle/boot)
+    if (hasRotatedSinceSend && (lastPulseAttempt == 0 || (now - lastPulseAttempt >= MIN_PULSE_INTERVAL_MS))) {
+        lastPulseAttempt = now;
+        if (sendSensorEvent("pulse", "active")) {
+            lastPulseSentTime = now;
+            hasRotatedSinceSend = false;
+        }
     }
 
     reportStoppedIfInactive(now);
