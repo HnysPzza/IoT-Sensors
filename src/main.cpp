@@ -11,8 +11,8 @@
 // Node ID   : S-03
 // Purpose   : Monitor continuous spindle/shaft rotation via inductive proximity sensor.
 //             - Rotating (signal toggles): transmits throttled activity pulses.
-//             - Stopped (constant LOW or constant HIGH): stops emitting pulses.
-//             - Backend absence watchdog evaluates silence and triggers downtime.
+//             - Stopped (constant LOW or constant HIGH): after INACTIVITY_TIMEOUT_MS
+//               without edges, sends one idle event; rotation resumes pulses.
 // =============================================================================
 
 // Identity, WiFi, backend URL, pins and timing live in config.h.
@@ -28,6 +28,9 @@ static uint32_t  lastHeartbeatSent   = 0;
 static uint32_t  lastStatusPrint     = 0;
 static bool      activitySinceHb     = false;
 static uint32_t  pulseCount          = 0;
+static uint32_t  lastEdgeTime        = 0;
+static uint32_t  lastIdleAttempt     = 0;
+static bool      stoppedReported     = false;
 
 static Preferences prefs;
 static String      bootId;
@@ -85,7 +88,7 @@ bool postToBackend(const char* path, const String& jsonBody) {
     return (code >= 200 && code < 300);
 }
 
-void sendSensorEvent(const char* eventType, const char* signal) {
+bool sendSensorEvent(const char* eventType, const char* signal) {
     String meta = String("{\"rssi\":") + String(WiFi.RSSI()) +
                   ",\"pinState\":\"" + (currentState == LOW ? "LOW" : "HIGH") + "\"" +
                   ",\"totalPulses\":" + String(pulseCount) + "}";
@@ -100,7 +103,9 @@ void sendSensorEvent(const char* eventType, const char* signal) {
 
     if (postToBackend("/api/iot/events", body)) {
         Serial.printf("  [EVENT SENT] %s -> %s (pulse #%lu)\n", eventType, signal, (unsigned long)pulseCount);
+        return true;
     }
+    return false;
 }
 
 void sendHeartbeat() {
@@ -127,6 +132,23 @@ void reconnectWifiIfNeeded() {
     lastReconnectAttempt = now;
     Serial.println(F("  [WiFi] Disconnected, retrying..."));
     WiFi.reconnect();
+}
+
+void markRotationEdge(uint32_t now) {
+    lastEdgeTime = now;
+    stoppedReported = false;
+}
+
+bool shouldReportStopped(uint32_t now) {
+    if (stoppedReported) return false;
+    if (now - lastEdgeTime < INACTIVITY_TIMEOUT_MS) return false;
+    return now - lastIdleAttempt >= IDLE_RETRY_INTERVAL_MS;
+}
+
+void reportStoppedIfInactive(uint32_t now) {
+    if (!shouldReportStopped(now)) return;
+    lastIdleAttempt = now;
+    stoppedReported = sendSensorEvent("idle", "idle");
 }
 
 // ── Setup ───────────────────────────────────────────────────────────────────
@@ -184,6 +206,7 @@ void setup() {
     lastRawReading    = currentState;
     lastHeartbeatSent = millis();
     lastStatusPrint   = millis();
+    lastEdgeTime      = millis();
 
     sendHeartbeat();
 }
@@ -207,6 +230,7 @@ void loop() {
         pulseCount++;
         hasRotatedSinceSend = true;
         activitySinceHb = true;
+        markRotationEdge(now);
 
         digitalWrite(ONBOARD_LED_PIN, HIGH);
     }
@@ -217,6 +241,8 @@ void loop() {
         hasRotatedSinceSend = false;
         sendSensorEvent("pulse", "active");
     }
+
+    reportStoppedIfInactive(now);
 
     // Keep pulse indicator LED visible for 200ms after each detected edge
     if (now - lastDebounceTime > 200) {

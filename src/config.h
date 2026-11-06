@@ -34,7 +34,8 @@
 // ==============================================================================
 #define SENSOR_DEBOUNCE_MS          30     // Stable duration required to confirm state change (ms)
 #define MIN_PULSE_INTERVAL_MS       1500   // Max 1 HTTP pulse event per 1.5s while rotating
-#define INACTIVITY_TIMEOUT_MS       30000  // Inactivity timeout threshold for Node 3 (30 seconds)
+#define INACTIVITY_TIMEOUT_MS       30000  // No edges for this long -> report spindle stopped (idle event)
+#define IDLE_RETRY_INTERVAL_MS      5000   // Gap between idle event retries when the backend is unreachable
 #define HEARTBEAT_INTERVAL_MS       10000  // Periodic status report interval (ms)
 #define STATUS_PRINT_INTERVAL_MS    3000   // Serial status update interval (ms)
 #define WIFI_RECONNECT_INTERVAL_MS  5000   // Minimum gap (ms) between WiFi reconnect attempts
